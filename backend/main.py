@@ -8,7 +8,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 import uvicorn
@@ -24,7 +24,11 @@ async def ticker():
     while True:
         await asyncio.sleep(0.8)
         if demo.running:
-            demo.step()
+            try:
+                demo.step()
+            except NotImplementedError:
+                # step() has paused the experiment and preserved the event.
+                pass
 
 
 @asynccontextmanager
@@ -37,6 +41,11 @@ async def lifespan(app):
 
 
 app = FastAPI(title="HotStuff Classroom Demo", lifespan=lifespan)
+@app.exception_handler(NotImplementedError)
+async def missing_function(request, exc):
+    return JSONResponse(status_code=501, content={"detail": str(exc), "state": demo.snapshot()})
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
@@ -97,5 +106,35 @@ async def byzantine(request: ByzantineRequest):
     return demo.snapshot()
 
 
+class BatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_txs_per_block: int = Field(strict=True, ge=1)
+
+
+class AttackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str
+    node_id: int = Field(strict=True, ge=1, le=4)
+
+
+@app.post("/api/config/batch")
+async def batch_config(request: BatchRequest):
+    try:
+        demo.configure_batch(request.max_txs_per_block)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"max_txs_per_block": demo.max_txs_per_block, "state": demo.snapshot()}
+
+
+@app.post("/api/attacks")
+async def attack(request: AttackRequest):
+    try:
+        demo.inject_attack(request.kind, request.node_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return demo.snapshot()
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
+

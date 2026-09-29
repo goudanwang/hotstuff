@@ -25,3 +25,4 @@ class Block:
     transactions: list[Transaction] = field(default_factory=list)
     # The proposal's justification: a QC certifying its parent, not itself.
     qc: QC | None = None
+

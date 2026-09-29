@@ -45,131 +45,74 @@ class HotStuffDemo:
         self.log_sequence = 0
         self.steps = 0
         self.running = False
+        self.max_txs_per_block = 5
         self.phase = "Ready for proposal"
         self.log("Genesis B0 committed · Enter View 1 · Leader N1", "view")
 
     def submit(self, sender: str, receiver: str, amount: int) -> Transaction:
-        if sender not in INITIAL_BALANCES or receiver not in INITIAL_BALANCES:
-            raise ValueError("Choose Alice, Bob, or Charlie")
-        if type(amount) is not int or not 1 <= amount <= 1_000_000:
-            raise ValueError("Amount must be an integer between 1 and 1000000")
-        tx = Transaction(f"Tx{len(self.transactions) + 1}", sender, receiver, amount)
-        self.transactions[tx.id] = tx
-        self.mempool.append(tx.id)
-        self.log(f"{tx.id} enters mempool: {sender} → {receiver} : {amount}", "tx")
-        return tx
+        """B1 implement transaction admission and mempool insertion.
+        Return a Transaction; validate account names and a strict integer amount
+        in [1, 1000000]. Invalid requests must not modify state. Allocate Tx1,
+        Tx2, ... for the basic task. B6 may extend this interface for signed input.
+        Do not execute transfers here."""
+        raise NotImplementedError('TODO B1 implement transaction admission and mempool insertion.')
 
     def step(self):
-        if not self.events:
-            self.events.append(("propose", None))
-        action, data = self.events.popleft()
-        self.steps += 1
-        {"propose": self.propose, "vote": self.vote, "qc": self.form_qc,
-         "next_view": self.next_view, "timeout": self.timeout}[action](data)
+        """Provided event dispatcher; a missing TODO pauses without losing work."""
+        checkpoint = deepcopy(self.__dict__)
+        try:
+            if not self.events:
+                self.events.append(("propose", None))
+            action, data = self.events.popleft()
+            self.steps += 1
+            {"propose": self.propose, "vote": self.vote, "qc": self.form_qc,
+             "next_view": self.next_view, "timeout": self.timeout}[action](data)
+        except NotImplementedError as exc:
+            self.__dict__.clear()
+            self.__dict__.update(checkpoint)
+            self.running = False
+            self.phase = str(exc)
+            self.log(str(exc), "todo")
+            raise
 
     def propose(self, _):
-        leader = self.nodes[self.leader_id - 1]
-        if leader.crashed:
-            self.phase = "Waiting for timeout"
-            self.log(f"Leader N{leader.id} is crashed; no proposal", "fault")
-            self.events.append(("timeout", self.TIMEOUT_TICKS))
-            return
-        # Simplified NEW-VIEW exchange: collect live peers' HighQCs.
-        peers = [n for n in self.nodes if not n.crashed]
-        best = max(peers, key=lambda n: n.high_qc.view)
-        leader.blocks.update(best.blocks)
-        leader.high_qc = best.high_qc
-        parent = leader.blocks[leader.high_qc.block_id]
-        already_proposed = set()
-        cursor = parent
-        while cursor:
-            already_proposed.update(tx.id for tx in cursor.transactions)
-            cursor = leader.blocks.get(cursor.parent_id)
-        # Keep transactions in the mempool until commit. Orphaned proposals
-        # therefore never lose transactions; ancestors are not packed twice.
-        batch = [self.transactions[tx_id] for tx_id in self.mempool
-                 if tx_id not in already_proposed][:5]
-        block = Block(f"B{len(self.blocks)}", parent.id, self.view,
-                      leader.id, batch, leader.high_qc)
-        self.blocks[block.id] = block
-        self.votes[block.id] = set()
-        for node in peers:
-            node.blocks.update(leader.blocks)
-            node.blocks[block.id] = block
-        self.phase = f"Proposal {block.id}"
-        self.log(f"Leader N{leader.id} proposes {block.id} → parent {parent.id} "
-                 f"({len(batch)} tx)", "proposal")
-        for node in self.nodes:
-            self.events.append(("vote", (node.id, block.id)))
+        """A1 implement a leader proposal for the current view.
+        Select a justified parent, allocate a unique block ID, populate the
+        proposal and distribute it to live replicas. Register an empty vote set
+        and enqueue ("vote", (node_id, block_id)) for the intended recipients.
+        Call select_transactions(parent) only when the mempool is nonempty;
+        otherwise use an empty payload, allowing independent Task A work.
+        A6: handle a crashed leader using the timeout event. No balances change."""
+        raise NotImplementedError('TODO A1 implement a leader proposal for the current view.')
 
     def vote(self, data):
-        node_id, block_id = data
-        node = self.nodes[node_id - 1]
-        block = self.blocks[block_id]
-        # A certificate is trusted only if it is in the simulated QC registry.
-        valid = (block.qc == self.qcs.get(block.parent_id)
-                 and block.qc is not None and block.qc.view < block.view
-                 and block.proposer == self.leader_id)
-        if valid and node.can_vote(block):
-            node.last_voted_view = block.view
-            self.votes[block_id].add(node.id)
-            self.phase = f"Votes {block_id}: {len(self.votes[block_id])}/3"
-            self.log(f"N{node.id} votes {block_id} "
-                     f"({len(self.votes[block_id])}/{self.QUORUM})", "vote")
-            if len(self.votes[block_id]) >= self.QUORUM and block_id not in self.qc_scheduled:
-                self.qc_scheduled.add(block_id)
-                self.events.append(("qc", block_id))
-        else:
-            reason = "crashed" if node.crashed else "withholds vote" if node.withhold_vote else "unsafe / already voted"
-            self.log(f"N{node.id} skips vote for {block_id}: {reason}", "fault")
-        if not self.events:
-            self.phase = "Waiting for timeout"
-            self.events.append(("timeout", self.TIMEOUT_TICKS))
+        """A2 implement proposal validation and one safe vote per replica/view.
+        data is (node_id, block_id). Validate current leader, view, parent and
+        its registered QC, then consult Node.can_vote(). Track voting state and
+        distinct voters. Once a quorum is reached, enqueue a single ("qc", id)
+        event. Reject invalid proposals without changing voting or account state.
+        A6: schedule a timeout if this round cannot obtain a QC."""
+        raise NotImplementedError('TODO A2 implement proposal validation and one safe vote per replica/view.')
 
     def form_qc(self, block_id):
-        block = self.blocks[block_id]
-        if self.nodes[block.proposer - 1].crashed:
-            self.log(f"Leader N{block.proposer} crashed before broadcasting QC({block_id})", "fault")
-            self.events.append(("timeout", self.TIMEOUT_TICKS))
-            return
-        voters = tuple(sorted(self.votes[block_id]))
-        if len(voters) < self.QUORUM:
-            raise RuntimeError("QC requires three distinct votes")
-        qc = QC(block_id, block.view, voters)
-        self.qcs[block_id] = qc
-        self.phase = f"QC({block_id}) formed"
-        self.log(f"QC({block_id}) formed · voters " + ", ".join(f"N{i}" for i in voters), "qc")
-        newly_committed = set()
-        for node in self.nodes:
-            newly_committed.update(node.receive_qc(qc))
-        for committed_id in sorted(newly_committed, key=lambda b: self.blocks[b].view):
-            self.log(f"{committed_id} committed · certified 3-chain ends at {block_id}", "commit")
-            live = next(n for n in self.nodes if not n.crashed)
-            for tx in self.blocks[committed_id].transactions:
-                if tx.id in self.mempool:
-                    self.mempool.remove(tx.id)
-                receipt = live.machine.receipts[tx.id]
-                self.log(f"{tx.id} {receipt['status']}" +
-                         (f": {receipt['error']}" if receipt['error'] else
-                          f": {tx.sender} → {tx.receiver} : {tx.amount}"), "tx")
-        self.events.append(("next_view", "QC"))
+        """A3 construct a certificate from distinct valid matching votes.
+        Validate the block, view and authorized voters; fewer than QUORUM must
+        never create a QC. Register the valid certificate, call dispatch_qc(qc),
+        and enqueue ("next_view", "QC"). A6 handles a crashed collector.
+        Do not implement transaction processing in this function."""
+        raise NotImplementedError('TODO A3 construct a certificate from distinct valid matching votes.')
 
     def timeout(self, remaining):
-        self.phase = f"Timeout: {remaining} tick(s)"
-        self.log(f"View {self.view} timeout countdown: {remaining}", "timeout")
-        if remaining > 1:
-            self.events.append(("timeout", remaining - 1))
-        else:
-            self.log(f"Timeout in View {self.view}; rotate leader", "timeout")
-            self.events.append(("next_view", "timeout"))
+        """A6 implement logical timeout countdown and leader replacement.
+        remaining is the number of logical ticks left. Eventually schedule
+        ("next_view", "timeout") while preserving the quorum and safety state."""
+        raise NotImplementedError('TODO A6 implement logical timeout countdown and leader replacement.')
 
     def next_view(self, reason):
-        self.view += 1
-        for node in self.nodes:
-            node.enter_view(self.view, self.leader_id)
-        self.phase = "Ready for proposal"
-        self.log(f"Enter View {self.view} · Leader N{self.leader_id} · {reason}", "view")
-        self.events.append(("propose", None))
+        """A5 implement view increment, leader rotation and replica updates.
+        Preserve QCs, locks and committed history. Call each node's enter_view
+        as appropriate and enqueue the next proposal event."""
+        raise NotImplementedError('TODO A5 implement view increment, leader rotation and replica updates.')
 
     def crash_leader(self):
         leader = self.nodes[self.leader_id - 1]
@@ -186,19 +129,13 @@ class HotStuffDemo:
                  "All nodes vote normally", "fault")
 
     def recover(self):
-        peers = [node for node in self.nodes if not node.crashed]
-        source = max(peers or self.nodes, key=lambda n: (n.high_qc.view, len(n.committed_blocks)))
-        for node in self.nodes:
-            if node.crashed:
-                node.blocks = source.blocks.copy()
-                node.high_qc = source.high_qc
-                node.locked_qc = source.locked_qc
-                node.committed_blocks = source.committed_blocks.copy()
-                node.machine = deepcopy(source.machine)
-                node.crashed = False
-            node.withhold_vote = False
-            node.enter_view(self.view, self.leader_id)
-        self.log("Recover Nodes · catch up blocks, QCs and committed state from peer", "recovery")
+        """A6 restore crashed replicas from a trusted live peer.
+        Catch up blocks, QCs, locks, committed chain and application state.
+        Preserve voting history so a replica cannot vote twice in one view.
+        Restore balances and receipts, and B6 nonces if implemented. If no live
+        peer is available, reject recovery without inventing state. No disk
+        persistence is required. Clear simulated faults and rejoin safely."""
+        raise NotImplementedError('TODO A6 restore crashed replicas from a trusted live peer.')
 
     def snapshot(self):
         source = max(self.nodes, key=lambda n: len(n.committed_blocks))
@@ -229,3 +166,58 @@ class HotStuffDemo:
                 "committed_chain": source.committed_blocks.copy(), "consistent": consistent,
                 "logs": list(self.logs), "quorum": self.QUORUM,
                 "next_event": self.events[0][0] if self.events else "propose"}
+
+
+
+    def select_transactions(self, parent: Block) -> list[Transaction]:
+        """B2 select eligible pending transactions without consuming them.
+        Return at most max_txs_per_block (default 5), excluding transaction IDs
+        on the selected parent chain. An abandoned branch does not exclude an ID.
+        Empty input returns an empty list. Keep IDs in the pool until commit.
+        """
+        raise NotImplementedError("TODO B2 implement select_transactions")
+
+    def finalize_transactions(self, committed_ids: list[str]):
+        """B4 finalize pool entries after per-replica execution.
+        committed_ids is ordered and contains newly committed blocks. Remove
+        their transaction IDs from the pool, including rejected executions,
+        and record useful transaction events. Repeated finalization is harmless.
+        This method does not execute transfers or decide consensus.
+        """
+        raise NotImplementedError("TODO B4 implement finalize_transactions")
+
+    def configure_batch(self, limit):
+        """B5 set a positive integer batch limit and return the accepted value.
+        Reject bool, zero, negatives and non-integers without changing state.
+        Reset restores the default value 5 in this starter contract.
+        """
+        raise NotImplementedError("TODO B5 implement configure_batch")
+
+    def inject_attack(self, kind: str, node_id: int):
+        """A7 inject an active Byzantine action in the current experiment.
+        Implement equivocation by the current leader plus duplicate_vote OR
+        invalid_qc. Extend message delivery as needed so honest replicas receive
+        the attack through normal validation paths. Log the action and supply
+        assertions. Do not count the supplied withholding switch as this task.
+        A malicious replica controls only its own simulator identity.
+        """
+        raise NotImplementedError("TODO A7 implement inject_attack")
+
+    def dispatch_qc(self, qc: QC):
+        """Provided integration wiring. Caller must validate/register the QC.
+
+        Task A reports committed IDs; Task B executes their payload and cleans
+        the pool. Empty payloads bypass Task B, not consensus validation.
+        """
+        newly_committed = set()
+        for node in self.nodes:
+            committed = node.receive_qc(qc)
+            newly_committed.update(committed)
+            if committed and any(node.blocks[b].transactions for b in committed):
+                node.execute_committed(committed)
+        ordered = sorted(newly_committed, key=lambda b: self.blocks[b].view)
+        for block_id in ordered:
+            self.log(f"{block_id} committed", "commit")
+        if any(self.blocks[b].transactions for b in ordered):
+            self.finalize_transactions(ordered)
+        return ordered

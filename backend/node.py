@@ -17,57 +17,38 @@ class Node:
         self.withhold_vote = False
 
     def enter_view(self, view: int, leader_id: int):
-        if not self.crashed:
-            self.view = view
-            self.role = "Leader" if self.id == leader_id else "Replica"
+        """A5 update local view and role for a live replica.
+        A crashed replica remains frozen. Never erase voting history or locks."""
+        raise NotImplementedError('TODO A5 update local view and role for a live replica.')
 
     def extends(self, block_id: str, ancestor_id: str) -> bool:
-        while block_id in self.blocks:
-            if block_id == ancestor_id:
-                return True
-            parent = self.blocks[block_id].parent_id
-            if parent is None:
-                break
-            block_id = parent
-        return False
+        """A2 test whether block_id descends from ancestor_id, including itself.
+        Use local parent links. Unknown or malformed ancestry must not be
+        accepted as an extension. Return a Boolean without modifying state."""
+        raise NotImplementedError('TODO A2 test whether block_id descends from ancestor_id, including itself.')
 
     def can_vote(self, block: Block) -> bool:
-        if self.crashed or self.withhold_vote or block.view != self.view:
-            return False
-        if block.view <= self.last_voted_view or block.qc is None:
-            return False
-        # HotStuff safe-node rule: extend the lock, or carry a newer QC.
-        return (self.extends(block.parent_id, self.locked_qc.block_id)
-                or block.qc.view > self.locked_qc.view)
+        """A2 decide whether this replica may vote for a proposal.
+        Enforce availability, current view, one vote per view and the safe-node
+        lock rule. Return a Boolean; vote() records the actual cast vote.
+        The coordinator validates the proposal leader and parent certificate."""
+        raise NotImplementedError('TODO A2 decide whether this replica may vote for a proposal.')
 
     def receive_qc(self, qc: QC) -> list[str]:
-        """Advance HighQC, lock the certified parent, commit a 3-chain ancestor."""
-        if self.crashed:
-            return []
-        block = self.blocks[qc.block_id]
-        if qc.view > self.high_qc.view:
-            self.high_qc = qc
-        if block.qc and block.qc.view > self.locked_qc.view:
-            self.locked_qc = block.qc
-        parent = self.blocks.get(block.parent_id)
-        grandparent = self.blocks.get(parent.parent_id) if parent else None
-        if not parent or not grandparent or not block.qc or not parent.qc:
-            return []
-        # Three certified, directly linked blocks in consecutive views.
-        if not (block.qc.block_id == parent.id
-                and parent.qc.block_id == grandparent.id
-                and grandparent.view + 1 == parent.view
-                and parent.view + 1 == block.view):
-            return []
-        path = []
-        cursor = grandparent
-        while cursor.id not in self.committed_blocks:
-            path.append(cursor)
-            cursor = self.blocks[cursor.parent_id]
-        committed = []
-        for ancestor in reversed(path):
-            self.committed_blocks.append(ancestor.id)
-            for tx in ancestor.transactions:
-                self.machine.apply(tx)
-            committed.append(ancestor.id)
-        return committed
+        """A4 update certificate/lock state and decide committed block IDs.
+        Return newly committed IDs in ancestor-first order; a crashed node
+        returns no progress. Check the linked, consecutive-view three-chain
+        contract. Preserve existing commits and prevent repeated commitment.
+        Do not execute transactions here: dispatch_qc() invokes Task B.
+        A7 may add certificate validation at this boundary as needed."""
+        raise NotImplementedError('TODO A4 update certificate/lock state and decide committed block IDs.')
+
+
+
+    def execute_committed(self, block_ids: list[str]):
+        """B3 execute only blocks already in this replica's committed history.
+        Reject uncommitted IDs before applying any transaction. Preserve block
+        and payload order; call machine.apply() and rely on B4 receipt semantics
+        for repeat delivery. A crashed replica must not execute new work.
+        """
+        raise NotImplementedError("TODO B3 implement execute_committed")

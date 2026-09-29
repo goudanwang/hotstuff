@@ -11,18 +11,12 @@ class StateMachine:
         self.receipts: dict[str, dict] = {}
 
     def apply(self, tx: Transaction) -> dict:
-        if tx.id in self.receipts:
-            return self.receipts[tx.id]
-        error = None
-        if tx.sender not in self.accounts or tx.receiver not in self.accounts:
-            error = "Unknown account"
-        elif type(tx.amount) is not int or tx.amount <= 0:
-            error = "Amount must be a positive integer"
-        elif self.accounts[tx.sender] < tx.amount:
-            error = "Insufficient balance at commit"
-        if error is None:
-            self.accounts[tx.sender] -= tx.amount
-            self.accounts[tx.receiver] += tx.amount
-        receipt = {"status": "rejected" if error else "committed", "error": error}
-        self.receipts[tx.id] = receipt
-        return receipt
+        """B3 B4 validate and deterministically execute one committed transaction.
+        Called only through the committed-execution path (or isolated unit tests).
+        Check known accounts, a strict positive integer amount and available
+        funds. A failed transfer changes no balance. Return/store a receipt with
+        status committed or rejected and error None or an explanatory string.
+        Reusing a transaction ID returns its prior receipt without another debit.
+        B6 extends this with signature verification, nonces and stable identities."""
+        raise NotImplementedError('TODO B3 B4 validate and deterministically execute one committed transaction.')
+
